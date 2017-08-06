@@ -22,9 +22,9 @@ mygrid.data = cbind(1,tolocs)
 grid.geod = as.geodata(mygrid.data, coords.col=2:3, data.col=1, covar.col=2:3)
 
 ### read station data
-temp = read.csv("../data/station_tmean.csv", header=T)
-numdays<-dim(temp)[2]-5
-locator<-temp[,2:5]
+temp = read.csv("../data/station_tmin.csv", header=T)
+numdays<-dim(temp)[2]-5 # droping label columns 
+locator<-temp[,2:5]  # label columns
 loct  = read.csv("../data/station_serial.csv")[,2]
 
 ##### vector matching data 
@@ -32,20 +32,18 @@ Monames= c("Jan","Feb", "Mar", "Apr","May", "Jun", "Jul", "Aug", "Sep", "Oct", "
 allmn= paste(Monames,"_",rep(2011:2016,12)[order(rep(2011:2016,12))], sep="")[1:69]
 allddmon = read.csv("../data/date_mon.csv") 
 
-##### reading monthly worldclim data
-allddwctemp = NULL
-prvmonYr = 0
+##### reading daily tmean data
+allddtmp = NULL
 for (i in 1:(dim(allddmon)[1])){
-  mon = allddmon[i,2]
-  if (prvmonYr!=mon) {  
-    fdata = paste("../data/wclim/tmean",mon,"_col.csv",sep="")
-    tmp <- as.vector(unlist(read.csv(fdata, header=T)))
-  }  
+  fdata = paste("../gen2/tmean_day_",i,".csv",sep="")
+  tmp <- as.vector(unlist(read.csv(fdata, header=T)))
   tmpthis = tmp[loct]
-  allddwctemp<- cbind(allddwctemp,tmpthis)
-  prvmonYr = mon
+  allddtmp<- cbind(allddtmp,tmpthis)
 }
+allddtmp
 
+
+allrng=NULL
 ###########
 n.cores <- 30
 n.lines <- 30
@@ -62,50 +60,47 @@ for (drop.station in row.num:row.num) {
   
   for (coler in 5+(1:numdays)){
     myd<-data.frame(cbind(locator[-drop.station,2:1],as.vector(unlist(temp[-drop.station,coler]-32)*5/9),as.vector(unlist(temp[-drop.station,4])), 
-                          locator[-drop.station,4],allddwctemp[-drop.station,coler-5])) 
+                          locator[-drop.station,4],allddtmp[-drop.station,coler-5])) 
     myd = myd [which(!is.na(myd[,3])),]
-    names(myd)<- c("lon","lat","temp", "dist", "vqx","wqx")
+    names(myd)<- c("lon","lat","temp", "dist", "vqx","nqx")
     myd[,6] = myd[,6]
     head(myd)
     row.names(myd) = NULL
-
+    
     if (is.na(temp[drop.station,coler])) {
       finalout = NA
     } else {
       
-    mygeod=  as.geodata(myd[,c(1,2,3,5,6)], coords.col=1:2, data.col=3, covar.col=1:5)
-    maxd = 1.5*diff(range(myd$lat))
-    var2 <- variog(mygeod, option="bin",
-                   trend=~lon+lat+vqx+wqx,
-                   bin.cloud="TRUE", max.dist=maxd)
-
-    mxr = mean(var2$v[order(-var2$v)][1:3]) #mean of the top three
-    fit3 = try(variofit(var2, cov.model="gauss", ini.cov.pars=c(mxr,8), 
-                        fix.nugget= FALSE, nugget=10, wei="cressie"), silent=T)
-    
-    if(is(fit3,"try-error"))  {
-      mxr =0.0005
-      nng = 0.0
-    } else { nng = fit3$nugget
-    if (nng<0) nng=0 }
-    
-    mon = allddmon[coler-5,2]
-    if (prvmonYr!=mon) {  
-      fdata = paste("../data/wclim/tmean",mon,"_col.csv",sep="")
+      mygeod=  as.geodata(myd[,c(1,2,3,5,6)], coords.col=1:2, data.col=3, covar.col=1:5)
+      maxd = 1.5*diff(range(myd$lat))
+      var2 <- variog(mygeod, option="bin",
+                     trend=~lon+lat+vqx+nqx,
+                     bin.cloud="TRUE", max.dist=maxd)
+      
+      mxr = mean(var2$v[order(-var2$v)][1:3]) #mean of the top three
+      fit3 = try(variofit(var2, cov.model="gauss", ini.cov.pars=c(mxr,8), 
+                          fix.nugget= FALSE, nugget=10, wei="cressie"), silent=T)
+      
+      if(is(fit3,"try-error"))  {
+        mxr =0.0005
+        nng = 0.0
+      } else { nng = fit3$nugget
+      if (nng<0) nng=0 }
+      
+      fdata = paste("../gen2/tmean_day_",coler-5,".csv",sep="")
       tmp <- as.vector(unlist(read.csv(fdata, header=T)))
-      tmpwclim <- matrix(as.vector(unlist(tmp)),nrow=480)
-    }  
-    tmpwclim[is.na(tmpwclim)]<- 0
-    wq<- grid_match(tmpwclim)  
-    
-    mygrid.data = cbind(1,tolocs,vqx=c(vq),wqx=c(wq))
-    grid.geod = as.geodata(mygrid.data, coords.col=2:3, data.col=1, covar.col=2:5)
-    
-    kc = krige.conv(geodata=mygeod, locations=grid.geod$coords, 
-                            krige=krige.control(type.krige="OK", 
-                              trend.d=trend.spatial(var2$trend,mygeod),
-                              trend.l=trend.spatial(~lon+lat+vqx+wqx, grid.geod),
-                              cov.pars=c(mxr,8), nug=nng))
+      tmpnoaa <- matrix(as.vector(unlist(tmp)),nrow=480)
+      tmpnoaa[is.na(tmpnoaa)]<- 0
+      nq<- grid_match(tmpnoaa)  
+
+      mygrid.data = cbind(1,tolocs,vqx=c(vq),nqx=c(nq))
+      grid.geod = as.geodata(mygrid.data, coords.col=2:3, data.col=1, covar.col=2:5)
+      
+      kc = krige.conv(geodata=mygeod, locations=grid.geod$coords, 
+                      krige=krige.control(type.krige="OK", 
+                                          trend.d=trend.spatial(var2$trend,mygeod),
+                                          trend.l=trend.spatial(~lon+lat+vqx+nqx, grid.geod),
+                                          cov.pars=c(mxr,8), nug=nng))
       kkc= matrix(kc$predict,nrow=480)
       finalout = reverse_grid_match(kkc)
       finalout[which(finalout<0)] = 0
@@ -113,10 +108,9 @@ for (drop.station in row.num:row.num) {
       #zq<-list(x=xq, y=yq, z=zq)
       #image(zq)
     }      
-    thisstation <- c(thisstation,finalout[loct[drop.station]])
-    prvmonYr = mon
+    thisstation <- c(thisstation,finalout[loct[drop.station]])  # extract prediction at dropped station
   }
-  txt<-paste("../generated/interpol_tmean_wo_stn",drop.station,"_allsurf.csv",sep="")
+  txt<-paste("../generated/interpol_tmin_wo_stn",drop.station,"_allsurf.csv",sep="")
   write.csv(thisstation,txt,row.names=F, quote=F)
 }
 
@@ -124,7 +118,7 @@ for (drop.station in row.num:row.num) {
 ##### generate statistic
 obspred<- NULL
 for (drop.station in 1:30){
-  dd = as.vector(unlist(read.csv(paste("../data/climinterpolated/interpol_tmean_wo_stn",drop.station,"_allsurf.csv",sep=""))))
+  dd = as.vector(unlist(read.csv(paste("../data/climinterpolated/interpol_tmin_wo_stn",drop.station,"_allsurf.csv",sep=""))))
   obspred = rbind(obspred,cbind(as.vector(unlist((temp[drop.station,-(1:5)]))),round(dd,1)))
 }  
 

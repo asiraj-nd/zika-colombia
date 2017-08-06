@@ -25,6 +25,7 @@ grid.geod = as.geodata(mygrid.data, coords.col=2:3, data.col=1, covar.col=2:3)
 temp = read.csv("../data/station_tmean.csv", header=T)
 numdays<-dim(temp)[2]-5
 locator<-temp[,2:5]
+loct  = read.csv("../data/station_serial.csv")[,2]
 
 ##### vector matching data 
 Monames= c("Jan","Feb", "Mar", "Apr","May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")

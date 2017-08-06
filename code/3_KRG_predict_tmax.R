@@ -22,7 +22,7 @@ mygrid.data = cbind(1,tolocs)
 grid.geod = as.geodata(mygrid.data, coords.col=2:3, data.col=1, covar.col=2:3)
 
 ### read station data
-temp = read.csv("../data/station_dptemp.csv", header=T)
+temp = read.csv("../data/station_tmax.csv", header=T)
 numdays<-dim(temp)[2]-5 # droping label columns 
 locator<-temp[,2:5]  # label columns
 loct  = read.csv("../data/station_serial.csv")[,2]
@@ -32,38 +32,34 @@ Monames= c("Jan","Feb", "Mar", "Apr","May", "Jun", "Jul", "Aug", "Sep", "Oct", "
 allmn= paste(Monames,"_",rep(2011:2016,12)[order(rep(2011:2016,12))], sep="")[1:69]
 allddmon = read.csv("../data/date_mon.csv") 
 
-##### reading daily tmean data
-allddtmp = NULL
+##### reading monthly worldclim data
+allddwctemp = NULL
+prvmonYr = 0
 for (i in 1:(dim(allddmon)[1])){
-  fdata = paste("../gen2/tmean_day_",i,".csv",sep="")
-  tmp <- as.vector(unlist(read.csv(fdata, header=T)))
+  mon = allddmon[i,2]
+  if (prvmonYr!=mon) {  
+    fdata = paste("../data/wclim/tmax",mon,"_col.csv",sep="")
+    tmp <- as.vector(unlist(read.csv(fdata, header=T)))
+  }  
   tmpthis = tmp[loct]
-  allddtmp<- cbind(allddtmp,tmpthis)
+  allddwctemp<- cbind(allddwctemp,tmpthis)
+  prvmonYr = mon
 }
-allddtmp
 
-###########
-n.cores <- 30
-n.lines <- 30
-
-seqP <- seq(1,n.lines,n.lines/n.cores)
-xx <- as.numeric(Sys.getenv("SGE_TASK_ID"))
-row.num <- seqP[xx]
-
+prvmonYr = 0
 allstation <- NULL
-for (coler in 5+(967:numdays)){
+for (coler in 5+(1:numdays)){
     myd<-data.frame(cbind(locator[,2:1],as.vector(unlist(temp[,coler]-32)*5/9),as.vector(unlist(temp[,4])), 
-                          locator[,4],allddtmp[,coler-5])) 
+                          locator[,4],allddwctemp[,coler-5])) 
     myd = myd [which(!is.na(myd[,3])),]
-    names(myd)<- c("lon","lat","temp", "dist", "vqx","nqx")
+    names(myd)<- c("lon","lat","temp", "dist", "vqx","wqx")
     head(myd)
     row.names(myd) = NULL
   
     mygeod=  as.geodata(myd[,c(1,2,3,5,6)], coords.col=1:2, data.col=3, covar.col=c(1:2,4:5))
     maxd = 1.5*diff(range(myd$lat))
-    ## stockastic model (non- repeatable)
     var2 <- variog(mygeod, option="bin",
-                   trend=~lon+lat+vqx+nqx,
+                   trend=~lon+lat+vqx+wqx,
                    bin.cloud="TRUE", max.dist=maxd)
 
     mxr = mean(var2$v[order(-var2$v)][1:3]) #mean of the top three
@@ -76,30 +72,38 @@ for (coler in 5+(967:numdays)){
     } else { nng = fit3$nugget
     if (nng<0) nng=0 }
     
-    fdata = paste("../generated/tmean_day_",coler-5,".bil",sep="")
-    tmp <- as.vector(unlist(as.matrix(raster(fdata),ncol=nx,nrow=ny)))
-    tmpnoaa <- matrix(as.vector(unlist(tmp)),nrow=480)
-    tmpnoaa[is.na(tmpnoaa)]<- 0
-    nq<- grid_match(tmpnoaa)  
+    monYr = allmn[allddmon[coler-5,4]]
+    mon = allddmon[coler-5,2]
     
-    mygrid.data = cbind(1,tolocs,vqx=c(vq),nqx=c(nq))
+    if (prvmonYr!=monYr) {  
+      fdata = paste("../data/wclim/tmax",mon,"_col.csv",sep="")
+      tmp <- as.vector(unlist(read.csv(fdata, header=T)))
+      tmpwclim <- matrix(as.vector(unlist(tmp)),nrow=480)
+    }  
+    
+    tmpwclim[is.na(tmpwclim)]<- 0
+    wq<- grid_match(tmpwclim)  
+    
+    mygrid.data = cbind(1,tolocs,vqx=c(vq),wqx=c(wq))
     grid.geod = as.geodata(mygrid.data, coords.col=2:3, data.col=1, covar.col=2:5)
     
     kc = krige.conv(geodata=mygeod, locations=grid.geod$coords, 
                             krige=krige.control(type.krige="OK", 
                               trend.d=trend.spatial(var2$trend,mygeod),
-                              trend.l=trend.spatial(~lon+lat+vqx+nqx,grid.geod),
+                              trend.l=trend.spatial(~lon+lat+vqx+wqx, grid.geod),
                               cov.pars=c(mxr,8), nug=nng))
+
       kkc= matrix(kc$predict,nrow=480)
       finalout = reverse_grid_match(kkc)
+      
       # finalout[which(finalout<0)] = 0 #for rainfall
       #zq<- structure(.Data=as.vector(unlist(t(finalout[480:1,]))), .Dim=c(nx,ny))
       #zq<-list(x=xq, y=yq, z=zq)
       #image(zq)
-      txt<-paste("../generated/dptemp_day_",coler-5,sep="")
+      txt<-paste("../generated/tmax_day_",coler-5,sep="")
       colo2_5(finalout,txt)
+      prvmonYr = monYr
 }
-
 
   ### NA to ocean
   txt<-paste("../generated/tmean_day_",104,sep="")
@@ -107,10 +111,9 @@ for (coler in 5+(967:numdays)){
   ocean = which(tmeanx < -16, arr.ind=T)
 
   for (i in 1:1096) {
-    txt<-paste("../generated/dptemp_day_",i,sep="")
+    txt<-paste("../generated/tmax_day_",i,sep="")
     tmean <- as.matrix(raster(paste(txt,".bil",sep="")),ncol=nx,nrow=ny)
     tmean[ocean]<- NA
     colo2_5(tmean,txt)
   }
-
 
